@@ -1,3 +1,5 @@
+from time import sleep
+
 from bs4 import BeautifulSoup #html parser
 
 from selenium import webdriver #html requesting, loading js and getting page source
@@ -21,9 +23,16 @@ def check_nan(string,pool=False,area=False): #this function is for when the raw 
     if string == "—": #if the text that is passed into the function is a dash, it means the data does not exist so return None
         return None
     elif pool == True: #if the data being checked for nan is pool data and it is not None, return just the string
-        return string 
+        if string != "No":
+            return True
+        else:
+            return False
     elif area == True: #if the data being checked for nan is the area of the house and it is not None, return a parsed, integer version of the value (area value specifically has to be parsed in a certain way to get the integer)
-        return int(string.replace(",", "")[:-6]) #removes the "Sq Ft" at the end and also the comma in the number, allowing it to become an integer
+    #     return int(string.replace(",", "")[:-6]) #removes the "Sq Ft" at the end and also the comma in the number, allowing it to become an integer
+        try:
+            return int(string.replace(",", ""))
+        except:
+            return None
     else:
         try: #try to convert the string to integer and return
             return int(string)
@@ -51,8 +60,11 @@ for page in range(page_num):
     link_results = list() #make a list where all these links will be stored
     for card in range(0,len(listing_cards)): #loop thru all of the found elements containing links
     # for card in range(1): #for debug when a certain link needs to be tested
-        link_results.append("https://www.bexrealty.com" + listing_cards[card].find("a").get('href')) #get the "a" element withing each div and its hrefs (link) as well as append the beginning of the website link since it only returns the end
-        print(link_results[-1]) #print the last found link (basically the link above)
+        try:
+            link_results.append("https://www.bexrealty.com" + listing_cards[card].find("a").get('href')) #get the "a" element withing each div and its hrefs (link) as well as append the beginning of the website link since it only returns the end
+            print(link_results[-1]) #print the last found link (basically the link above)
+        except:
+            print("link broke")
     print(str(len(link_results)) + " search results found on page " + str(page + 1)) #print amount of links found
 
 
@@ -61,31 +73,43 @@ for page in range(page_num):
         data_list = list() #creates a list that will be the row of data for this specific house
         driver.get(link) #gets the link of the specific house's page
         # driver.get("https://www.bexrealty.com/Ohio/Reynoldsburg/3005-Hollybank-Rd/single-family-home/") #for debug when a certain link needs to be tested
+        sleep(1)
         page_source = driver.page_source #get page source
         house_parse = BeautifulSoup(page_source,'html.parser') #init beautifulsoup parser object
 
         try:
             address = house_parse.find("h1",{"class":"page-header"}).text #get address of house
-            for i in range(2):
-                address = address[:address.find("\n")] + address[address.find("\n") + 12:] #gets rid of random whitespace in address text (this caused one issue where a house with both a private and community pool was left with whitespace, probably better to use .replace but too late now since it was an easy manual fix lol)
-            data_list.append(address) #add address to row of data
+            data_list.append(address[:-20].strip()) #add address to row of data
 
             price = house_parse.find("p",{"class":"listing-price"}).text.replace(",", "") #get price element and get rid of commas for efficiency
             try:
-                price = int(float(price[price.rfind("$") + 1:-1])) #convert price to float first in case it is a float (rounds down so 299999.99 becomes 299999), also only starts accounting for price at last instance of a dollar sign due to the possibility of a discount being displayed
+                price = int(float(price[price.rfind("$") + 1:])) #convert price to float first in case it is a float (rounds down so 299999.99 becomes 299999), also only starts accounting for price at last instance of a dollar sign due to the possibility of a discount being displayed
             except:
                 price = int(float(price[price.rfind("$") + 1:price.find(" ")])) #if there was an error above, likely means that the house has "bank owned" at the end so just get the first word of the string which is the price
             data_list.append(price) #get adds price to row of data ()
 
-            features = house_parse.find_all("div",{"class":"features-grid-outside"}) #find all elements that have info about the house
-            data_list.append(check_nan(features[0].text[10:11])) #add bedrooms to row
-            data_list.append(check_nan(features[1].text[11:12])) #bathrooms to row
-            data_list.append(check_nan(features[2].text[8:9])) #garages to row
-            data_list.append(check_nan(features[3].text[17:-9],pool=True)) #pool to row
-            data_list.append(check_nan(features[4].text[12:])) #year built to row
-            data_list.append(check_nan(features[5].text[13:],area=True)) #area square feet to row
+            features = house_parse.find("div",{"class":"features-grid"}) #find all elements that have info about the house
+            
+            beds = features.find("div",{"class":"bed"}).text
+            data_list.append(check_nan(beds[:beds.find("Bedrooms") - 1])) #add bedrooms to row
+
+            baths = features.find("div",{"class":"bath"}).text
+            data_list.append(check_nan(baths[:baths.find("Bathrooms") - 1])) #bathrooms to row
+
+            garages = features.find("div",{"class":"garage"}).text
+            data_list.append(check_nan(garages[:garages.find(" ")])) #garages to row
+
+            pool = house_parse.find("ul",{"aria-label":"Pool"}).text
+            data_list.append(check_nan(pool,pool=True)) #pool to row
+
+            year = features.find("div",{"class":"year"}).text
+            data_list.append(check_nan(year[year.find("in") + 2:])) #year built to row
+
+            sqft = features.find("div",{"class":"sqft"}).text
+            data_list.append(check_nan(sqft[:sqft.find(" ")],area=True)) #area square feet to row
 
             print(data_list) #prints the completed row of data, showing all attributes that were found for the house
+            
             if data_list[1] > 25000:
                 data.append(data_list) #adds the row to the list that will eventually become the pandas dataframe
             else:
@@ -93,6 +117,8 @@ for page in range(page_num):
         except:
             print(link + " resulted in an error when parsing and was skipped") #if some error occurs during the html parsing or the value parsing then just skip it and enumerate the error counter
             errors += 1
+            input("enter when next")
+        
 
     print(str(len(data)) + " rows of data currently collected") # show the user how many rows of data have been collected after each scraped page
 
